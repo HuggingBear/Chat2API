@@ -65,27 +65,39 @@ async def send_conversation(request: Request, req_token: str = Depends(oauth2_sc
     except Exception:
         raise HTTPException(status_code=400, detail={"error": "Invalid JSON body"})
 
-    chat_service = await async_retry(to_send_conversation, request_data, req_token)
+    response = None
     try:
-        await chat_service.prepare_send_conversation()
-        res = await chat_service.send_conversation()
-        if isinstance(res, types.AsyncGeneratorType):
-            background = BackgroundTask(chat_service.close_client)
-            return StreamingResponse(res, media_type="text/event-stream", background=background)
-        else:
-            background = BackgroundTask(chat_service.close_client)
-            return JSONResponse(res, media_type="application/json", background=background)
+        response = await async_retry(create_conversation_retry_wrapper, request_data, req_token)
     except HTTPException as e:
-        await chat_service.close_client()
         if e.status_code == 500:
             logger.error(f"Server error, {str(e)}")
             raise HTTPException(status_code=500, detail="Server error")
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception as e:
-        await chat_service.close_client()
         logger.error(f"Server error, {str(e)}")
         raise HTTPException(status_code=500, detail="Server error")
+    
+    return response
 
+async def create_conversation_retry_wrapper(request_data, req_token):
+    chat_service = await to_send_conversation(request_data, req_token)
+    
+    try:
+        await chat_service.prepare_send_conversation()
+        response = await chat_service.send_conversation()
+        
+        if isinstance(response, types.AsyncGeneratorType):
+            background = BackgroundTask(chat_service.close_client)
+            return StreamingResponse(response, media_type="text/event-stream", background=background)
+        else:
+            background = BackgroundTask(chat_service.close_client)
+            return JSONResponse(response, media_type="application/json", background=background)
+    except HTTPException as e:
+        await chat_service.close_client()
+        raise e
+    except Exception as e:
+        await chat_service.close_client()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(f"/{api_prefix}/tokens" if api_prefix else "/tokens", response_class=HTMLResponse)
 async def upload_html(request: Request):

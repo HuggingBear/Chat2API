@@ -340,7 +340,7 @@ class ChatService:
             content_type = r.headers.get("Content-Type", "")
             if "text/event-stream" in content_type and stream:
                 await set_wss(self.req_token, False)
-                return stream_response(self, r.aiter_lines(), self.resp_model, self.max_tokens)
+                return stream_response(self, r.aiter_lines(), self.resp_model, self.max_tokens, raise_on_error=False)
             elif "text/event-stream" in content_type and not stream:
                 await set_wss(self.req_token, False)
                 return await format_not_stream_response(
@@ -362,7 +362,7 @@ class ChatService:
                 wss_r = wss_stream_response(self.ws, conversation_id)
                 try:
                     if stream and isinstance(wss_r, types.AsyncGeneratorType):
-                        return stream_response(self, wss_r, self.resp_model, self.max_tokens)
+                        return stream_response(self, wss_r, self.resp_model, self.max_tokens, raise_on_error=False)
                     else:
                         return await format_not_stream_response(
                             stream_response(self, wss_r, self.resp_model, self.max_tokens), self.prompt_tokens,

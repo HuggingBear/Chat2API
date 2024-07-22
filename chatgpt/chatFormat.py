@@ -105,7 +105,7 @@ async def wss_stream_response(websocket, conversation_id):
             continue
 
 
-async def stream_response(service, response, model, max_tokens):
+async def stream_response(service, response, model, max_tokens, raise_on_error=True):
     chat_id = f"chatcmpl-{''.join(random.choice(string.ascii_letters + string.digits) for _ in range(29))}"
     system_fingerprint_list = model_system_fingerprint.get(model, None)
     system_fingerprint = random.choice(system_fingerprint_list) if system_fingerprint_list else None
@@ -125,9 +125,37 @@ async def stream_response(service, response, model, max_tokens):
         if end:
             yield "data: [DONE]\n\n"
             break
+        
         try:
             if chunk.startswith("data: {"):
                 chunk_old_data = json.loads(chunk[6:])
+                error = chunk_old_data.get("error")
+                # Handle "Our systems have detected unusual activity coming from your system. Please try again later"
+                # Give something back to prevent clients stuck forever
+                if error and not start:
+                    if raise_on_error:
+                        raise Exception("Stream ended before it was start")
+                    else:
+                        chunk_new_data = {
+                            "id": "chatcmpl-error-0001",
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"role": "system", "content": "OpenAI systems have detected unusual activity coming from our system. Please try again later."},
+                                    "logprobs": None,
+                                    "finish_reason": "stop"
+                                }
+                            ],
+                            "system_fingerprint": system_fingerprint
+                        }
+                        
+                        yield f"data: {json.dumps(chunk_new_data)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        break
+                
                 finish_reason = None
                 message = chunk_old_data.get("message", {})
                 role = message.get('author', {}).get('role')
@@ -234,6 +262,7 @@ async def stream_response(service, response, model, max_tokens):
                         continue
                 else:
                     continue
+
                 last_message_id = message_id
                 if not end and not delta.get("content"):
                     delta = {"role": "assistant", "content": ""}
